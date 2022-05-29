@@ -5,6 +5,8 @@
 
 void twist_bootstrap() {
 	VDP_setScreenWidth320();
+
+	JOY_init();
 	SPR_init();
 
 	VDP_loadFontData( twist_font_noted.tileset->tiles, 96, CPU );
