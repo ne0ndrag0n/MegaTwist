@@ -1,7 +1,8 @@
+#include <genesis.h>
 #include "bootstrap.h"
 
-int main() {
-	twist_bootstrap();
+int main( u16 resetType ) {
+	twist_bootstrap( resetType );
 
 	while( 1 );
 }
