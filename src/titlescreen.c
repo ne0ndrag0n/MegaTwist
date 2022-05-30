@@ -68,7 +68,5 @@ void twist_titlescreen() {
 		MEM_free( frames[ i ] );
 	}
 
-	VDP_clearPlane( BG_A, FALSE );
-
 	// Exit titlescreen to go to gameplay
 }

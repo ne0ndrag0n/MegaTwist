@@ -13,8 +13,9 @@ static void twist_init_board( Swirl* board ) {
 }
 
 static void twist_draw_board( Swirl* board, s32 score ) {
-	VDP_clearPlane( BG_A, FALSE );
-	VDP_clearPlane( BG_B, FALSE );
+	VDP_clearPlane( BG_A, TRUE );
+	VDP_clearPlane( BG_B, TRUE );
+	VDP_clearPlane( WINDOW, TRUE );
 
 	VDP_drawText( "Twist", 33, 1 );
 
