@@ -4,6 +4,8 @@
 #include "resources.h"
 #include "swirls.h"
 
+static u16 joyDump = 0;
+
 static void twist_init_board( Board* game_state ) {
 	memcpy( game_state->select_anim_palette, twist_swirl1.palette->data, 32 );
 	SPR_setVRAMTileIndex( game_state->on_screen_cursor, TILE_USER_INDEX + 16 );
@@ -84,8 +86,6 @@ static void twist_load_swirl_gfx() {
 	PAL_setColors( 32, twist_swirl1.palette->data, 16, CPU );
 }
 
-static u16 joyDump = 0;
-
 static void twist_board_handler( u16 joy, u16 changed, u16 state ) {
 	switch ( joy ) {
 		case JOY_1: {
@@ -94,7 +94,67 @@ static void twist_board_handler( u16 joy, u16 changed, u16 state ) {
 	}
 }
 
-static void twist_update_cursor( Board* game_state ) {
+static ClosureArguments* twist_get_arg_block( EventLoop* event_loop ) {
+	for( int i = 0; i < TWIST_MAX_EVENTS * TWIST_ARGS_PER_EVENT; i++ ) {
+		if( !event_loop->arg_pool[ i ].in_use ) {
+			event_loop->arg_pool[ i ].in_use = TRUE;
+			return event_loop->arg_pool + i;
+		}
+	}
+
+	// Argument pool full
+	VDP_drawText( "Argument pool full", 2, 2 );
+	VDP_drawText( "System Halted", 2, 3 );
+	while( 1 );
+}
+
+static void twist_execute_events( Board* game_state, EventLoop* event_loop ) {
+	for( int i = 0; i < TWIST_MAX_EVENTS; i++ ) {
+		if( event_loop->events[ i ].function ) {
+			event_loop->events[ i ].function( game_state, event_loop->events[ i ].arguments );
+
+			event_loop->events[ i ].function = NULL;
+			if( event_loop->events[ i ].arguments ) {
+				event_loop->events[ i ].arguments->in_use = FALSE;
+			}
+		}
+	}
+}
+
+static void twist_enqueue_event( Closure* staged, EventLoop* event_loop ) {
+	// Full queue case
+	if( event_loop->events[ TWIST_MAX_EVENTS - 1 ].function ) {
+		VDP_drawText( "Event queue full", 2, 2 );
+		VDP_drawText( "System Halted", 2, 3 );
+		while( 1 );
+	}
+
+	// Empty queue case
+	if( !event_loop->events[ 0 ].function ) {
+		event_loop->events[ 0 ] = *staged;
+		return;
+	}
+
+	// Slot this item after the last executed event
+	for( int i = TWIST_MAX_EVENTS - 2; i >= 0; i-- ) {
+		if( event_loop->events[ i ].function ) {
+			event_loop->events[ i + 1 ] = *staged;
+			return;
+		}
+	}
+}
+
+static void twist_swirl_selected( Board* game_state, ClosureArguments* arguments ) {
+	Vect2D_s16 selected;
+	memcpy( &selected, arguments->data, sizeof( Vect2D_s16 ) );
+
+	char selected_string[ 10 ] = { 0 };
+	sprintf( selected_string, "%d, %d  ", selected.x, selected.y );
+
+	VDP_drawText( selected_string, 33, 3 );
+}
+
+static void twist_update_cursor( Board* game_state, EventLoop* event_loop ) {
 	static Vect2D_s16 animDirection = ( Vect2D_s16 ){ .x = 0, .y = 0 };
 	static u16 remaining = 0;
 
@@ -121,17 +181,16 @@ static void twist_update_cursor( Board* game_state ) {
 		} else if( joyDump & BUTTON_DOWN && currentPosition.y < 208 ) {
 			animDirection = ( Vect2D_s16 ){ .x = 0, .y = 1 };
 			remaining = 4;
-		}
-	}
-}
+		} else if( joyDump & BUTTON_A ) {
+			Vect2D_s16 selected = ( Vect2D_s16 ){ .x = currentPosition.x / 16, .y = currentPosition.y / 16 };
+			ClosureArguments* arguments = twist_get_arg_block( event_loop );
+			memcpy( arguments->data, &selected, sizeof( Vect2D_s16 ) );
 
-static void twist_execute_events( Board* game_state, void* events_pointer ) {
-	BoardEvent* events = ( BoardEvent* ) events_pointer;
-
-	for( int i = 0; i < TWIST_MAX_EVENTS; i++ ) {
-		if( events[ i ] ) {
-			events[ i ]( game_state, events_pointer );
-			events[ i ] = NULL;
+			Closure closure = ( Closure ) {
+				.function = twist_swirl_selected,
+				.arguments = arguments
+			};
+			twist_enqueue_event( &closure, event_loop );
 		}
 	}
 }
@@ -162,14 +221,14 @@ void twist_gameplay() {
 		)
 	};
 
+	EventLoop event_loop = { 0 };
+
 	twist_init_board( &game_state );
 
-	BoardEvent events[ TWIST_MAX_EVENTS ] = { NULL };
-
 	while( TRUE ) {
-		twist_update_cursor( &game_state );
+		twist_update_cursor( &game_state, &event_loop );
 		twist_draw_board( &game_state );
-		twist_execute_events( &game_state, events );
+		twist_execute_events( &game_state, &event_loop );
 
 		SPR_update();
 		SYS_doVBlankProcess();

@@ -3,9 +3,11 @@
 
 #include <genesis.h>
 
-#define TWIST_SWIRLS_X		15
-#define TWIST_SWIRLS_Y		15
-#define TWIST_MAX_EVENTS	64
+#define TWIST_SWIRLS_X			15
+#define TWIST_SWIRLS_Y			15
+#define TWIST_MAX_EVENTS		64
+#define TWIST_ARGS_PER_EVENT	3
+#define TWIST_BYTES_PER_ARG		16
 
 #define USED_BUTTONS	( BUTTON_LEFT | BUTTON_RIGHT | BUTTON_UP | BUTTON_DOWN )
 
@@ -28,7 +30,7 @@ typedef struct {
 	PaletteAnimation palette_animation;
 } Swirl;
 
-typedef struct Board {
+typedef struct {
 	Swirl board[ TWIST_SWIRLS_X * TWIST_SWIRLS_Y ];
 	u16 select_anim_palette[ 16 ];
 	s32 score;
@@ -36,7 +38,22 @@ typedef struct Board {
 	Sprite* on_screen_cursor;
 } Board;
 
-typedef void (*BoardEvent)( Board*, void* );
+typedef struct {
+	s8 in_use;
+	unsigned char data[ TWIST_BYTES_PER_ARG ];
+} ClosureArguments;
+
+typedef void (*BoardEvent)( Board*, ClosureArguments* );
+
+typedef struct {
+	BoardEvent function;
+	ClosureArguments* arguments;
+} Closure;
+
+typedef struct {
+	Closure events[ TWIST_MAX_EVENTS ];
+	ClosureArguments arg_pool[ TWIST_MAX_EVENTS * TWIST_ARGS_PER_EVENT ];
+} EventLoop;
 
 void twist_gameplay();
 
