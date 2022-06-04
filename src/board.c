@@ -43,7 +43,7 @@ static void twist_draw_board( Board* game_state ) {
 					VDP_fillTileMapRectInc(
 						BG_B,
 						TILE_ATTR_FULL(
-							PAL1,
+							game_state->board[ index ].selected ? PAL2 : PAL1,
 							FALSE,
 							FALSE,
 							FALSE,
@@ -196,22 +196,23 @@ static u8 twist_is_any_animating( Swirl* board ) {
 	return FALSE;
 }
 
-static void twist_flood_select( Swirl* board, s16 x, s16 y, s8 selected, s8 base_type ) {
+static void twist_select( Swirl* board, s8 x, s8 y, s8 selected, s8 base_type ) {
 	// Base cases
 	if( x >= TWIST_SWIRLS_X || y >= TWIST_SWIRLS_Y || x < 0 || y < 0 ) {
 		return;
 	}
 
-	Swirl* selected_swirl = board + ( TWIST_SWIRLS_X * y + x );
-	if( selected_swirl->type == base_type ) {
-		selected_swirl->selected = selected;
-		selected_swirl->palette_animation = selected == TRUE ? TO_SELECTED : TO_UNSELECTED;
-
-		twist_flood_select( board, x + 1, y, selected, base_type );
-		twist_flood_select( board, x - 1, y, selected, base_type );
-		twist_flood_select( board, x, y + 1, selected, base_type );
-		twist_flood_select( board, x, y - 1, selected, base_type );
+	if( board[ TWIST_SWIRLS_X * y + x ].type != base_type || board[ TWIST_SWIRLS_X * y + x ].selected == selected ) {
+		return;
 	}
+
+	board[ TWIST_SWIRLS_X * y + x ].selected = selected;
+	board[ TWIST_SWIRLS_X * y + x ].palette_animation = selected == TRUE ? TO_SELECTED : TO_UNSELECTED;
+
+	twist_select( board, x + 1, y, selected, base_type );
+	twist_select( board, x - 1, y, selected, base_type );
+	twist_select( board, x, y + 1, selected, base_type );
+	twist_select( board, x, y - 1, selected, base_type );
 }
 
 static void twist_on_swirl_selected( Board* game_state, ClosureArguments* arguments, void* event_loop_ref ) {
@@ -221,7 +222,7 @@ static void twist_on_swirl_selected( Board* game_state, ClosureArguments* argume
 	s16 selected_index = TWIST_SWIRLS_X * selected.y + selected.x;
 	// If this is already selected, unselect it
 	if( game_state->board[ selected_index ].selected ) {
-		twist_flood_select( game_state->board, selected.x, selected.y, FALSE, game_state->board[ selected_index ].type );
+		twist_select( game_state->board, selected.x, selected.y, FALSE, game_state->board[ selected_index ].type );
 	} else {
 		// If this is not selected, check and see if anything else is selected.
 		// If those items ARE selected, deselect them, then flood select.
@@ -230,7 +231,7 @@ static void twist_on_swirl_selected( Board* game_state, ClosureArguments* argume
 		if( any_selected.present ) {
 			// There are other swirls selected, so deselect them, then defer this function.
 			s16 any_selected_index = TWIST_SWIRLS_X * any_selected.value.y + any_selected.value.x;
-			twist_flood_select( game_state->board, any_selected.value.x, any_selected.value.y, FALSE, game_state->board[ any_selected_index ].type );
+			twist_select( game_state->board, any_selected.value.x, any_selected.value.y, FALSE, game_state->board[ any_selected_index ].type );
 
 			// That found swirl now gets an animation_callback attached to it (they all finish at once)
 			// and will just come back in here after the animation is done.
@@ -240,9 +241,11 @@ static void twist_on_swirl_selected( Board* game_state, ClosureArguments* argume
 			game_state->board[ any_selected_index ].animation_callback = twist_defer_event( &closure, event_loop_ref );
 		} else {
 			// There are no other swirls selected, so simply select them (animation gets staged as part of changing selection status)
-			twist_flood_select( game_state->board, selected.x, selected.y, TRUE, game_state->board[ selected_index ].type );
+			twist_select( game_state->board, selected.x, selected.y, TRUE, game_state->board[ selected_index ].type );
 		}
 	}
+
+	game_state->dirty = TRUE;
 }
 
 static void twist_update_cursor( Board* game_state, EventLoop* event_loop ) {
@@ -302,7 +305,8 @@ void twist_gameplay() {
 	twist_load_swirl_gfx();
 
 	// Game state
-	Board game_state = ( Board ) {
+	Board* game_state = ( Board* ) MEM_alloc( sizeof( Board ) );
+	*game_state = ( Board ) {
 		.board = { 0 },
 		.select_anim_palette = { 0 },
 		.score = 0,
@@ -317,18 +321,25 @@ void twist_gameplay() {
 		)
 	};
 
-	EventLoop event_loop = { 0 };
+	EventLoop* event_loop = ( EventLoop* ) MEM_alloc( sizeof( EventLoop ) );
+	*event_loop = ( EventLoop ) {
+		.events = { 0 },
+		.deferred_pool = { 0 },
+		.arg_pool = { 0 }
+	};
 
-	twist_init_board( &game_state );
+	twist_init_board( game_state );
 
 	while( TRUE ) {
-		twist_update_cursor( &game_state, &event_loop );
-		twist_draw_board( &game_state );
-		twist_execute_events( &game_state, &event_loop );
+		twist_update_cursor( game_state, event_loop );
+		twist_draw_board( game_state );
+		twist_execute_events( game_state, event_loop );
 
 		SPR_update();
 		SYS_doVBlankProcess();
 	}
 
+	MEM_free( game_state );
+	MEM_free( event_loop );
 	MEM_free( frames );
 }
