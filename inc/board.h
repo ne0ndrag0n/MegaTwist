@@ -4,7 +4,7 @@
 #include <genesis.h>
 
 #define TWIST_SWIRLS_X			15
-#define TWIST_SWIRLS_Y			15
+#define TWIST_SWIRLS_Y			14
 #define TWIST_MAX_EVENTS		64
 #define TWIST_ARGS_PER_EVENT	3
 #define TWIST_BYTES_PER_ARG		16
@@ -14,20 +14,18 @@
 // Swirl.type
 #define NO_SWIRL		-1
 
-// PaletteAnimation.type
+// Swirl.palette_animation
 #define NO_ANIMATION    0
 #define TO_SELECTED     1
 #define TO_UNSELECTED   -1
 
-typedef struct {
-	s8 type;
-	s16 remaining_steps;		// To or from 0x0FFF as determined by type
-} PaletteAnimation;
+#define NO_VALUE		-1
 
 typedef struct {
 	s8 type;
 	s8 selected;
-	PaletteAnimation palette_animation;
+	s8 palette_animation;
+	void* animation_callback;
 } Swirl;
 
 typedef struct {
@@ -43,7 +41,7 @@ typedef struct {
 	unsigned char data[ TWIST_BYTES_PER_ARG ];
 } ClosureArguments;
 
-typedef void (*BoardEvent)( Board*, ClosureArguments* );
+typedef void (*BoardEvent)( Board*, ClosureArguments*, void* );
 
 typedef struct {
 	BoardEvent function;
@@ -52,6 +50,7 @@ typedef struct {
 
 typedef struct {
 	Closure events[ TWIST_MAX_EVENTS ];
+	Closure deferred_pool[ TWIST_MAX_EVENTS ];
 	ClosureArguments arg_pool[ TWIST_MAX_EVENTS * TWIST_ARGS_PER_EVENT ];
 } EventLoop;
 

@@ -1,6 +1,7 @@
 #include <genesis.h>
 #include <maths.h>
 #include "board.h"
+#include "optional.h"
 #include "resources.h"
 #include "swirls.h"
 
@@ -15,10 +16,8 @@ static void twist_init_board( Board* game_state ) {
 			game_state->board[ TWIST_SWIRLS_X * y + x ] = ( Swirl ) {
 				.type = random() % 4,
 				.selected = FALSE,
-				( PaletteAnimation ) {
-					.type = NO_ANIMATION,
-					.remaining_steps = 0
-				}
+				.palette_animation = NO_ANIMATION,
+				.animation_callback = NULL
 			};
 		}
 	}
@@ -59,7 +58,7 @@ static void twist_draw_board( Board* game_state ) {
 					VDP_fillTileMapRect(
 						BG_B,
 						TILE_ATTR_FULL(
-							game_state->board[ index ].palette_animation.type == NO_ANIMATION ? PAL1 : PAL2,
+							PAL1,
 							FALSE,
 							FALSE,
 							FALSE,
@@ -111,7 +110,7 @@ static ClosureArguments* twist_get_arg_block( EventLoop* event_loop ) {
 static void twist_execute_events( Board* game_state, EventLoop* event_loop ) {
 	for( int i = 0; i < TWIST_MAX_EVENTS; i++ ) {
 		if( event_loop->events[ i ].function ) {
-			event_loop->events[ i ].function( game_state, event_loop->events[ i ].arguments );
+			event_loop->events[ i ].function( game_state, event_loop->events[ i ].arguments, event_loop );
 
 			event_loop->events[ i ].function = NULL;
 			if( event_loop->events[ i ].arguments ) {
@@ -144,14 +143,106 @@ static void twist_enqueue_event( Closure* staged, EventLoop* event_loop ) {
 	}
 }
 
-static void twist_swirl_selected( Board* game_state, ClosureArguments* arguments ) {
+static Closure* twist_defer_event( Closure* staged, EventLoop* event_loop ) {
+	for( int i = 0; i < TWIST_MAX_EVENTS; i++ ) {
+		if( !event_loop->deferred_pool[ i ].function ) {
+			event_loop->deferred_pool[ i ] = *staged;
+			return event_loop->deferred_pool + i;
+		}
+	}
+
+	VDP_drawText( "Deferred pool full", 2, 2 );
+	VDP_drawText( "System Halted", 2, 3 );
+	while( 1 );
+}
+
+static void twist_enqueue_deferred_event( Closure* staged, EventLoop* event_loop ) {
+	twist_enqueue_event( staged, event_loop );
+
+	staged->function = NULL;
+}
+
+static Optional_Vect2D_s16 twist_find_any_selected( Swirl* board ) {
+	Optional_Vect2D_s16 result = ( Optional_Vect2D_s16 ) {
+		.present = FALSE,
+		.value = ( Vect2D_s16 ) {
+			.x = 0,
+			.y = 0
+		}
+	};
+
+	for( int y = 0; y < TWIST_SWIRLS_Y; y++ ) {
+		for( int x = 0; x < TWIST_SWIRLS_X; x++ ) {
+			if( board[ TWIST_SWIRLS_X * y + x ].selected ) {
+				result.present = TRUE;
+				result.value.x = x;
+				result.value.y = y;
+
+				return result;
+			}
+		}
+	}
+
+	return result;
+}
+
+static u8 twist_is_any_animating( Swirl* board ) {
+	for( int i = 0; i < TWIST_SWIRLS_X * TWIST_SWIRLS_Y; i++ ) {
+		if( board[ i ].palette_animation != NO_ANIMATION ) {
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+static void twist_flood_select( Swirl* board, s16 x, s16 y, s8 selected, s8 base_type ) {
+	// Base cases
+	if( x >= TWIST_SWIRLS_X || y >= TWIST_SWIRLS_Y || x < 0 || y < 0 ) {
+		return;
+	}
+
+	Swirl* selected_swirl = board + ( TWIST_SWIRLS_X * y + x );
+	if( selected_swirl->type == base_type ) {
+		selected_swirl->selected = selected;
+		selected_swirl->palette_animation = selected == TRUE ? TO_SELECTED : TO_UNSELECTED;
+
+		twist_flood_select( board, x + 1, y, selected, base_type );
+		twist_flood_select( board, x - 1, y, selected, base_type );
+		twist_flood_select( board, x, y + 1, selected, base_type );
+		twist_flood_select( board, x, y - 1, selected, base_type );
+	}
+}
+
+static void twist_on_swirl_selected( Board* game_state, ClosureArguments* arguments, void* event_loop_ref ) {
 	Vect2D_s16 selected;
 	memcpy( &selected, arguments->data, sizeof( Vect2D_s16 ) );
 
-	char selected_string[ 10 ] = { 0 };
-	sprintf( selected_string, "%d, %d  ", selected.x, selected.y );
+	s16 selected_index = TWIST_SWIRLS_X * selected.y + selected.x;
+	// If this is already selected, unselect it
+	if( game_state->board[ selected_index ].selected ) {
+		twist_flood_select( game_state->board, selected.x, selected.y, FALSE, game_state->board[ selected_index ].type );
+	} else {
+		// If this is not selected, check and see if anything else is selected.
+		// If those items ARE selected, deselect them, then flood select.
+		Optional_Vect2D_s16 any_selected = twist_find_any_selected( game_state->board );
 
-	VDP_drawText( selected_string, 33, 3 );
+		if( any_selected.present ) {
+			// There are other swirls selected, so deselect them, then defer this function.
+			s16 any_selected_index = TWIST_SWIRLS_X * any_selected.value.y + any_selected.value.x;
+			twist_flood_select( game_state->board, any_selected.value.x, any_selected.value.y, FALSE, game_state->board[ any_selected_index ].type );
+
+			// That found swirl now gets an animation_callback attached to it (they all finish at once)
+			// and will just come back in here after the animation is done.
+			ClosureArguments* next_arguments = twist_get_arg_block( event_loop_ref );
+			memcpy( next_arguments, arguments, sizeof( ClosureArguments ) );
+			Closure closure = ( Closure ) { .function = twist_on_swirl_selected, .arguments = next_arguments };
+			game_state->board[ any_selected_index ].animation_callback = twist_defer_event( &closure, event_loop_ref );
+		} else {
+			// There are no other swirls selected, so simply select them (animation gets staged as part of changing selection status)
+			twist_flood_select( game_state->board, selected.x, selected.y, TRUE, game_state->board[ selected_index ].type );
+		}
+	}
 }
 
 static void twist_update_cursor( Board* game_state, EventLoop* event_loop ) {
@@ -182,12 +273,17 @@ static void twist_update_cursor( Board* game_state, EventLoop* event_loop ) {
 			animDirection = ( Vect2D_s16 ){ .x = 0, .y = 1 };
 			remaining = 4;
 		} else if( joyDump & BUTTON_A ) {
+			// Do nothing if any animation is actively playing
+			if( twist_is_any_animating( game_state->board ) ) {
+				return;
+			}
+
 			Vect2D_s16 selected = ( Vect2D_s16 ){ .x = currentPosition.x / 16, .y = currentPosition.y / 16 };
 			ClosureArguments* arguments = twist_get_arg_block( event_loop );
 			memcpy( arguments->data, &selected, sizeof( Vect2D_s16 ) );
 
 			Closure closure = ( Closure ) {
-				.function = twist_swirl_selected,
+				.function = twist_on_swirl_selected,
 				.arguments = arguments
 			};
 			twist_enqueue_event( &closure, event_loop );
