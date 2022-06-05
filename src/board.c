@@ -16,95 +16,55 @@ static void twist_init_board( Board* game_state ) {
 			game_state->board[ TWIST_SWIRLS_X * y + x ] = ( Swirl ) {
 				.type = random() % 4,
 				.selected = FALSE,
-				.palette_animation = NO_ANIMATION,
-				.animation_callback = NULL
+				.palette_animation = NO_ANIMATION
 			};
 		}
 	}
 }
 
-static void twist_draw_board( Board* game_state ) {
-	if( game_state->dirty == TRUE ) {
-		game_state->dirty = FALSE;
+static Optional_Vect2D_s16 twist_find_any_selected( Swirl* board ) {
+	Optional_Vect2D_s16 result = ( Optional_Vect2D_s16 ) {
+		.present = FALSE,
+		.value = ( Vect2D_s16 ) {
+			.x = 0,
+			.y = 0
+		}
+	};
 
-		VDP_drawText( "Twist", 33, 1 );
+	for( int y = 0; y < TWIST_SWIRLS_Y; y++ ) {
+		for( int x = 0; x < TWIST_SWIRLS_X; x++ ) {
+			if( board[ TWIST_SWIRLS_X * y + x ].selected ) {
+				result.present = TRUE;
+				result.value.x = x;
+				result.value.y = y;
 
-		VDP_drawText( "Score:", 31, 26 );
-
-		char scoreString[ 11 ] = { 0 };
-		sprintf( scoreString, "%d", game_state->score );
-		VDP_drawText( scoreString, 31, 27 );
-
-		for( int y = 0; y < TWIST_SWIRLS_Y; y++ ) {
-			for( int x = 0; x < TWIST_SWIRLS_X; x++ ) {
-				int index = TWIST_SWIRLS_X * y + x;
-
-				if( game_state->board[ index ].type != NO_SWIRL ) {
-					VDP_fillTileMapRectInc(
-						BG_B,
-						TILE_ATTR_FULL(
-							game_state->board[ index ].selected ? PAL2 : PAL1,
-							FALSE,
-							FALSE,
-							FALSE,
-							TILE_USER_INDEX + ( game_state->board[ index ].type * 4 )
-						),
-						x * 2,
-						y * 2,
-						2,
-						2
-					);
-				} else {
-					VDP_fillTileMapRect(
-						BG_B,
-						TILE_ATTR_FULL(
-							PAL1,
-							FALSE,
-							FALSE,
-							FALSE,
-							0
-						),
-						x * 2,
-						y * 2,
-						2,
-						2
-					);
-				}
+				return result;
 			}
 		}
 	}
+
+	return result;
 }
 
-static void twist_load_swirl_gfx() {
-	VDP_loadTileSet( twist_swirl1.tileset, TILE_USER_INDEX, CPU );
-	VDP_loadTileSet( twist_swirl2.tileset, TILE_USER_INDEX + 4, CPU );
-	VDP_loadTileSet( twist_swirl3.tileset, TILE_USER_INDEX + 8, CPU );
-	VDP_loadTileSet( twist_swirl4.tileset, TILE_USER_INDEX + 12, CPU );
-
-	PAL_setColors( 16, twist_swirl1.palette->data, 16, CPU );
-	PAL_setColors( 32, twist_swirl1.palette->data, 16, CPU );
-}
-
-static void twist_board_handler( u16 joy, u16 changed, u16 state ) {
-	switch ( joy ) {
-		case JOY_1: {
-			joyDump = state;
-		}
-	}
-}
-
-static ClosureArguments* twist_get_arg_block( EventLoop* event_loop ) {
-	for( int i = 0; i < TWIST_MAX_EVENTS * TWIST_ARGS_PER_EVENT; i++ ) {
-		if( !event_loop->arg_pool[ i ].in_use ) {
-			event_loop->arg_pool[ i ].in_use = TRUE;
-			return event_loop->arg_pool + i;
+static Optional_Vect2D_s16 twist_find_any_animating( Swirl* board ) {
+	for( int y = 0; y < TWIST_SWIRLS_Y; y++ ) {
+		for( int x = 0; x < TWIST_SWIRLS_X; x++ ) {
+			if( board[ TWIST_SWIRLS_X * y + x ].palette_animation != NO_ANIMATION ) {
+				return ( Optional_Vect2D_s16 ) {
+					.present = TRUE,
+					.value = ( Vect2D_s16 ) { .x = x, .y = y }
+				};
+			}
 		}
 	}
 
-	// Argument pool full
-	VDP_drawText( "Argument pool full", 2, 2 );
-	VDP_drawText( "System Halted", 2, 3 );
-	while( 1 );
+	return ( Optional_Vect2D_s16 ) {
+		.present = FALSE,
+		.value = ( Vect2D_s16 ) {
+			.x = 0,
+			.y = 0
+		}
+	};
 }
 
 static void twist_execute_events( Board* game_state, EventLoop* event_loop ) {
@@ -162,38 +122,152 @@ static void twist_enqueue_deferred_event( Closure* staged, EventLoop* event_loop
 	staged->function = NULL;
 }
 
-static Optional_Vect2D_s16 twist_find_any_selected( Swirl* board ) {
-	Optional_Vect2D_s16 result = ( Optional_Vect2D_s16 ) {
-		.present = FALSE,
-		.value = ( Vect2D_s16 ) {
-			.x = 0,
-			.y = 0
-		}
-	};
+static void twist_draw_board( Board* game_state, EventLoop* event_loop ) {
+	if( game_state->dirty == TRUE ) {
+		game_state->dirty = FALSE;
 
-	for( int y = 0; y < TWIST_SWIRLS_Y; y++ ) {
-		for( int x = 0; x < TWIST_SWIRLS_X; x++ ) {
-			if( board[ TWIST_SWIRLS_X * y + x ].selected ) {
-				result.present = TRUE;
-				result.value.x = x;
-				result.value.y = y;
+		VDP_drawText( "Twist", 33, 1 );
 
-				return result;
+		VDP_drawText( "Score:", 31, 26 );
+
+		char scoreString[ 11 ] = { 0 };
+		sprintf( scoreString, "%d", game_state->score );
+		VDP_drawText( scoreString, 31, 27 );
+
+		for( int y = 0; y < TWIST_SWIRLS_Y; y++ ) {
+			for( int x = 0; x < TWIST_SWIRLS_X; x++ ) {
+				int index = TWIST_SWIRLS_X * y + x;
+
+				if( game_state->board[ index ].type != NO_SWIRL ) {
+					VDP_fillTileMapRectInc(
+						BG_B,
+						TILE_ATTR_FULL(
+							game_state->board[ index ].selected ? PAL2 : PAL1,
+							FALSE,
+							FALSE,
+							FALSE,
+							TILE_USER_INDEX + ( game_state->board[ index ].type * 4 )
+						),
+						x * 2,
+						y * 2,
+						2,
+						2
+					);
+				} else {
+					VDP_fillTileMapRect(
+						BG_B,
+						TILE_ATTR_FULL(
+							PAL1,
+							FALSE,
+							FALSE,
+							FALSE,
+							0
+						),
+						x * 2,
+						y * 2,
+						2,
+						2
+					);
+				}
 			}
 		}
 	}
 
-	return result;
+	// Play animations (typically only one type of swirl is selected and we update it all at once)
+	Optional_Vect2D_s16 animating = twist_find_any_animating( game_state->board );
+	if( animating.present ) {
+		// What segment of the palette is being updated?
+		u8 index = ( game_state->board[ TWIST_BOARD_INDEX( animating.value.x, animating.value.y ) ].type * 3 ) + 1;
+
+		// What is the expected final result of the calculation?
+		u16 endpoints[ 3 ] = { 0 };
+		s16 direction;
+		if( game_state->board[ TWIST_BOARD_INDEX( animating.value.x, animating.value.y ) ].palette_animation == TO_SELECTED ) {
+			endpoints[ 0 ] =
+			endpoints[ 1 ] =
+			endpoints[ 2 ] =
+				0x0FFF;
+
+			direction = 1;
+		} else {
+			// it will be TO_UNSELECTED since find_any_animating returns a non-NO_ANIMATION status
+			endpoints[ 0 ] = twist_swirl1.palette->data[ index ];
+			endpoints[ 1 ] = twist_swirl1.palette->data[ index + 1 ];
+			endpoints[ 2 ] = twist_swirl1.palette->data[ index + 2 ];
+
+			direction = -1;
+		}
+
+		// Calculate the new palette value
+		s8 no_work_done = TRUE;
+		for( int i = 0; i < 3; i++ ) {
+			if( game_state->select_anim_palette[ index + i ] != endpoints[ i ] ) {
+				no_work_done = FALSE;
+
+				u32 col = game_state->select_anim_palette[ index + i ];
+				col += ( direction * 330 );
+
+				// clamp
+				if( direction == 1 && col > endpoints[ i ] ) {
+					col = endpoints[ i ];
+				}
+
+				if( direction == -1 && col < endpoints[ i ] ) {
+					col = endpoints[ i ];
+				}
+
+				game_state->select_anim_palette[ index + i ] = ( u16 ) col;
+			}
+		}
+
+		// If we just did nothing, stage the on_palette_anim callback & remove all animations
+		// otherwise, upload the palette and keep on going
+		if( no_work_done ) {
+			for( int i = 0; i < TWIST_SWIRLS_X * TWIST_SWIRLS_Y; i++ ) {
+				game_state->board[ i ].palette_animation = NO_ANIMATION;
+			}
+
+			if( game_state->on_palette_anim ) {
+				twist_enqueue_deferred_event( game_state->on_palette_anim, event_loop );
+				game_state->on_palette_anim = NULL;
+			}
+		} else {
+			// If there's more work to be done, send the palette and keep on truckin'
+			PAL_setColors( 32, game_state->select_anim_palette, 16, DMA_QUEUE_COPY );
+		}
+	}
 }
 
-static u8 twist_is_any_animating( Swirl* board ) {
-	for( int i = 0; i < TWIST_SWIRLS_X * TWIST_SWIRLS_Y; i++ ) {
-		if( board[ i ].palette_animation != NO_ANIMATION ) {
-			return TRUE;
+static void twist_load_swirl_gfx() {
+	VDP_loadTileSet( twist_swirl1.tileset, TILE_USER_INDEX, CPU );
+	VDP_loadTileSet( twist_swirl2.tileset, TILE_USER_INDEX + 4, CPU );
+	VDP_loadTileSet( twist_swirl3.tileset, TILE_USER_INDEX + 8, CPU );
+	VDP_loadTileSet( twist_swirl4.tileset, TILE_USER_INDEX + 12, CPU );
+
+	PAL_setColors( 16, twist_swirl1.palette->data, 16, CPU );
+	PAL_setColors( 32, twist_swirl1.palette->data, 16, CPU );
+}
+
+static void twist_board_handler( u16 joy, u16 changed, u16 state ) {
+	switch ( joy ) {
+		case JOY_1: {
+			joyDump = state;
+		}
+	}
+}
+
+static ClosureArguments* twist_get_arg_block( EventLoop* event_loop ) {
+	for( int i = 0; i < TWIST_MAX_EVENTS * TWIST_ARGS_PER_EVENT; i++ ) {
+		if( !event_loop->arg_pool[ i ].in_use ) {
+			event_loop->arg_pool[ i ].in_use = TRUE;
+			return event_loop->arg_pool + i;
 		}
 	}
 
-	return FALSE;
+	// Argument pool full
+	VDP_drawText( "Argument pool full", 2, 2 );
+	VDP_drawText( "System Halted", 2, 3 );
+	while( 1 );
 }
 
 static void twist_select( Swirl* board, s8 x, s8 y, s8 selected, s8 base_type ) {
@@ -238,7 +312,7 @@ static void twist_on_swirl_selected( Board* game_state, ClosureArguments* argume
 			ClosureArguments* next_arguments = twist_get_arg_block( event_loop_ref );
 			memcpy( next_arguments, arguments, sizeof( ClosureArguments ) );
 			Closure closure = ( Closure ) { .function = twist_on_swirl_selected, .arguments = next_arguments };
-			game_state->board[ any_selected_index ].animation_callback = twist_defer_event( &closure, event_loop_ref );
+			game_state->on_palette_anim = twist_defer_event( &closure, event_loop_ref );
 		} else {
 			// There are no other swirls selected, so simply select them (animation gets staged as part of changing selection status)
 			twist_select( game_state->board, selected.x, selected.y, TRUE, game_state->board[ selected_index ].type );
@@ -277,7 +351,7 @@ static void twist_update_cursor( Board* game_state, EventLoop* event_loop ) {
 			remaining = 4;
 		} else if( joyDump & BUTTON_A ) {
 			// Do nothing if any animation is actively playing
-			if( twist_is_any_animating( game_state->board ) ) {
+			if( twist_find_any_animating( game_state->board ).present ) {
 				return;
 			}
 
@@ -318,7 +392,8 @@ void twist_gameplay() {
 			TILE_ATTR( PAL1, TRUE, FALSE, FALSE ),
 			NULL,
 			SPR_FLAG_AUTO_VISIBILITY | SPR_FLAG_AUTO_SPRITE_ALLOC | SPR_FLAG_AUTO_TILE_UPLOAD
-		)
+		),
+		.on_palette_anim = NULL
 	};
 
 	EventLoop* event_loop = ( EventLoop* ) MEM_alloc( sizeof( EventLoop ) );
@@ -332,7 +407,7 @@ void twist_gameplay() {
 
 	while( TRUE ) {
 		twist_update_cursor( game_state, event_loop );
-		twist_draw_board( game_state );
+		twist_draw_board( game_state, event_loop );
 		twist_execute_events( game_state, event_loop );
 
 		SPR_update();
